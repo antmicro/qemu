@@ -159,7 +159,6 @@ meson_options_help() {
   printf "%s\n" '  oss             OSS sound support'
   printf "%s\n" '  pa              PulseAudio sound support'
   printf "%s\n" '  parallels       parallels image format support'
-  printf "%s\n" '  pcied           PCIe pipe support'
   printf "%s\n" '  pipewire        PipeWire sound support'
   printf "%s\n" '  pixman          pixman support'
   printf "%s\n" '  plugins         TCG plugins via shared library loading'
@@ -216,6 +215,7 @@ meson_options_help() {
   printf "%s\n" '  vpc             vpc image format support'
   printf "%s\n" '  vte             vte support for the gtk UI'
   printf "%s\n" '  vvfat           vvfat image format support'
+  printf "%s\n" '  warp-pipe       Warp Pipe PCIe adapter support'
   printf "%s\n" '  werror          Treat warnings as errors'
   printf "%s\n" '  whpx            WHPX acceleration support'
   printf "%s\n" '  xen             Xen backend support'
@@ -419,8 +419,6 @@ _meson_option_parse() {
     --disable-pa) printf "%s" -Dpa=disabled ;;
     --enable-parallels) printf "%s" -Dparallels=enabled ;;
     --disable-parallels) printf "%s" -Dparallels=disabled ;;
-    --enable-pcied) printf "%s" -Dpcied=enabled ;;
-    --disable-pcied) printf "%s" -Dpcied=disabled ;;
     --enable-pipewire) printf "%s" -Dpipewire=enabled ;;
     --disable-pipewire) printf "%s" -Dpipewire=disabled ;;
     --enable-pixman) printf "%s" -Dpixman=enabled ;;
@@ -553,6 +551,8 @@ _meson_option_parse() {
     --disable-vte) printf "%s" -Dvte=disabled ;;
     --enable-vvfat) printf "%s" -Dvvfat=enabled ;;
     --disable-vvfat) printf "%s" -Dvvfat=disabled ;;
+    --enable-warp-pipe) printf "%s" -Dwarp_pipe=enabled ;;
+    --disable-warp-pipe) printf "%s" -Dwarp_pipe=disabled ;;
     --enable-werror) printf "%s" -Dwerror=true ;;
     --disable-werror) printf "%s" -Dwerror=false ;;
     --enable-whpx) printf "%s" -Dwhpx=enabled ;;

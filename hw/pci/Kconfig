@@ -17,7 +17,7 @@ config MSI_NONBROKEN
     # 47d2b0f33c664533b8dbd5cb17faa8e6a01afe1f.
     bool
 
-config PCIE_PIPE
+config WARP_PIPE
     bool
     default y
     depends on PCI_EXPRESS

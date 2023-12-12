@@ -1750,9 +1750,9 @@ have_xen_pci_passthrough = get_option('xen_pci_passthrough') \
   .allowed()
 
 
-pcied = not_found
-if not get_option('pcied').auto() or have_system
-  pcied = dependency('pcied', required: get_option('pcied'),
+warp_pipe = not_found
+if not get_option('warp_pipe').auto() or have_system
+  warp_pipe = dependency('warp-pipe', required: get_option('warp_pipe'),
                       method: 'pkg-config')
 endif
 cacard = not_found
@@ -4352,7 +4352,7 @@ summary_info += {'Linux AIO support': libaio}
 summary_info += {'Linux io_uring support': linux_io_uring}
 summary_info += {'ATTR/XATTR support': libattr}
 summary_info += {'RDMA support':      rdma}
-summary_info += {'pcied support':     pcied}
+summary_info += {'Warp Pipe support': warp_pipe}
 summary_info += {'PVRDMA support':    have_pvrdma}
 summary_info += {'fdt support':       fdt_opt == 'disabled' ? false : fdt_opt}
 summary_info += {'libcap-ng support': libcap_ng}
