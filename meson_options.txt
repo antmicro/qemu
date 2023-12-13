@@ -200,8 +200,8 @@ option('rdma', type : 'feature', value : 'auto',
        description: 'Enable RDMA-based migration')
 option('pvrdma', type : 'feature', value : 'auto',
        description: 'Enable PVRDMA support')
-option('pcied', type : 'feature', value : 'auto',
-       description: 'PCIe pipe support')
+option('warp_pipe', type : 'feature', value : 'auto',
+       description: 'Warp Pipe PCIe adapter support')
 option('gtk', type : 'feature', value : 'auto',
        description: 'GTK+ user interface')
 option('sdl', type : 'feature', value : 'auto',
