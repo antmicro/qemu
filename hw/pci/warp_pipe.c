@@ -84,7 +84,7 @@ static uint64_t warp_mmio_read(void *opaque, hwaddr addr, unsigned size)
     uint64_t data = 0;
 
     received_cpl = false;
-    warppipe_read(&warp->client, addr, size, pcied_completion_handler);
+    warppipe_read(&warp->client, 0, addr, size, pcied_completion_handler);
 
     while (warp->client.active && !received_cpl) {
         warppipe_client_read(&warp->client);
@@ -105,7 +105,7 @@ static void warp_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     // take into account host endianness and pass correct bytes
     uint8_t val_raw[] = {val, val >> 8, val >> 16, val >> 24, val >> 32, val >> 48, val >> 56};
 
-    warppipe_write(&warp->client, addr, val_raw, size);
+    warppipe_write(&warp->client, 0, addr, val_raw, size);
 }
 
 static const MemoryRegionOps warp_mmio_ops = {
@@ -132,8 +132,7 @@ static void pci_warp_realize(PCIDevice *pdev, Error **errp)
         return;
     }
 
-    warppipe_register_read_cb(&warp->client, pcied_read_handler);
-    warppipe_register_write_cb(&warp->client, pcied_write_handler);
+    warppipe_register_bar(&warp->client, 0x1000, DMA_SIZE, 0, pcied_read_handler, pcied_write_handler);
 
     memory_region_init_io(&warp->mmio, OBJECT(warp), &warp_mmio_ops, warp,
                     "warp-pipe-mmio", 1 * MiB);
