@@ -71,7 +71,7 @@ static void pcied_write_handler(uint64_t addr, const void *data, int length, voi
 }
 
 static void pcied_completion_handler(const struct warppipe_completion_status_t completion_status,
-                const void *data, int length)
+                const void *data, int length, void *opaque)
 {
    memcpy(completion_data, data, length);
    received_cpl = true;
