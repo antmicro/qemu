@@ -56,19 +56,24 @@ struct WarpPipeState {
     MemoryRegion mmio;
     struct warppipe_server_t pcied_server;
     QemuThread thread;
-    QemuMutex thr_mutex;
-    QemuCond thr_cond;
+    QemuMutex thr_mutex_loop;
+    QemuMutex thr_mutex_cfg;
+    QemuMutex thr_mutex_data;
+    QemuCond thr_loop;
+    QemuCond thr_cfg_rdy;
+    QemuCond thr_data_rdy;
+
+#define WARP_PIPE_STATUS_IDLE    (1 << 0)
+#define WARP_PIPE_STATUS_CFG_CPL    (1 << 1)
+#define WARP_PIPE_STATUS_DATA_CPL   (1 << 2)
+    uint32_t status;
+    uint8_t completion_cfg_data[64];
+    uint8_t completion_data[8];
 
     char dma_buf[DMA_SIZE];
     uint32_t vectors;
     MSIVector *msi_vectors;
 };
-
-static uint8_t completion_data[8];
-static bool received_cpl;
-
-static uint8_t completion_cfg_data[64];
-static bool received_cfg_cpl;
 
 static int pcied_read_handler(uint64_t addr, void *data, int length, void *opaque)
 {
@@ -112,21 +117,31 @@ static void pcied_msix_write_handler(uint64_t addr, const void *data, int length
 static void pcied_completion_handler(const struct warppipe_completion_status_t completion_status,
                 const void *data, int length, void *opaque)
 {
-   memcpy(completion_data, data, length);
-   received_cpl = true;
+    WarpPipeState *warp = opaque;
+
+    memcpy(warp->completion_data, data, length);
+    qatomic_set(&warp->status, WARP_PIPE_STATUS_DATA_CPL);
+    qemu_mutex_lock(&warp->thr_mutex_data);
+    qemu_cond_signal(&warp->thr_data_rdy); // wakeup warp-pipe thread
+    qemu_mutex_unlock(&warp->thr_mutex_data);
 }
 
-static void pcied_config0_read_completion_handler(const struct warppipe_completion_status_t completion_status, const void *data, int length)
+static void pcied_config0_read_completion_handler(const struct warppipe_completion_status_t completion_status, const void *data, int length, void *opaque)
 {
-    memcpy(completion_cfg_data, data, length);
-    received_cfg_cpl = true;
+    WarpPipeState *warp = opaque;
+
+    memcpy(warp->completion_cfg_data, data, length);
+    qatomic_set(&warp->status, WARP_PIPE_STATUS_CFG_CPL);
+    qemu_mutex_lock(&warp->thr_mutex_cfg);
+    qemu_cond_signal(&warp->thr_cfg_rdy); // wakeup warp-pipe thread
+    qemu_mutex_unlock(&warp->thr_mutex_cfg);
 }
 
 static uint32_t pcied_read_config(PCIDevice *d,
                                  uint32_t address, int len)
 {
-    WarpPipeState *pipe = WARP_PIPE(d);
-    if (pipe->pcied_server.listen) {
+    WarpPipeState *warp = WARP_PIPE(d);
+    if (warp->pcied_server.listen) {
         return pci_default_read_config(d, address, len);
     }
     uint32_t data;
@@ -134,17 +149,22 @@ static uint32_t pcied_read_config(PCIDevice *d,
     assert(len == 1 || len == 2 || len == 4);
 
 
-    warppipe_config0_read(TAILQ_FIRST(&pipe->pcied_server.clients)->client, address, len, &pcied_config0_read_completion_handler);
+    warppipe_config0_read(TAILQ_FIRST(&warp->pcied_server.clients)->client, address, len, &pcied_config0_read_completion_handler);
 
-    qemu_mutex_lock(&pipe->thr_mutex);
-    while(!received_cfg_cpl) {
-        warppipe_server_loop(&pipe->pcied_server);
+    qemu_mutex_lock(&warp->thr_mutex_loop);
+    qemu_cond_signal(&warp->thr_loop); // wakeup warp-pipe thread
+    qemu_mutex_unlock(&warp->thr_mutex_loop);
+    qemu_mutex_lock(&warp->thr_mutex_cfg);
+    qemu_mutex_unlock_iothread();
+    while ((qatomic_read(&warp->status) & WARP_PIPE_STATUS_CFG_CPL) == 0) {
+        qemu_cond_wait(&warp->thr_cfg_rdy, &warp->thr_mutex_cfg);
     }
-    qemu_mutex_unlock(&pipe->thr_mutex);
+    qemu_mutex_lock_iothread();
 
-    memcpy(&data, completion_cfg_data, len);
+    memcpy(&data, warp->completion_cfg_data, len);
+    qatomic_set(&warp->status, WARP_PIPE_STATUS_IDLE);
+    qemu_mutex_unlock(&warp->thr_mutex_cfg);
 
-    received_cfg_cpl = false;
     return data;
 }
 
@@ -170,17 +190,22 @@ static uint64_t warp_mmio_read(void *opaque, hwaddr addr, unsigned size)
     uint64_t data = 0;
 
     warppipe_read(TAILQ_FIRST(&warp->pcied_server.clients)->client, 0, addr, size, pcied_completion_handler);
-    qemu_mutex_lock(&warp->thr_mutex);
-    while(!received_cpl) {
-        warppipe_server_loop(&warp->pcied_server);
+    qemu_mutex_lock(&warp->thr_mutex_loop);
+    qemu_cond_signal(&warp->thr_loop); // wakeup warp-pipe thread
+    qemu_mutex_unlock(&warp->thr_mutex_loop);
+    qemu_mutex_lock(&warp->thr_mutex_data);
+    qemu_mutex_unlock_iothread();
+    while ((qatomic_read(&warp->status) & WARP_PIPE_STATUS_DATA_CPL) == 0) {
+        qemu_cond_wait(&warp->thr_data_rdy, &warp->thr_mutex_data);
     }
-    received_cpl = false;
-    qemu_mutex_unlock(&warp->thr_mutex);
+    qemu_mutex_lock_iothread();
 
     // take into account host endianness and pass correct bytes
     for (int i = 0; i < size; i++) {
-        data |= completion_data[i] << (i * 8);
+        data |= warp->completion_data[i] << (i * 8);
     }
+    qatomic_set(&warp->status, WARP_PIPE_STATUS_IDLE);
+    qemu_mutex_unlock(&warp->thr_mutex_data);
 
     return data;
 }
@@ -192,7 +217,7 @@ static void warp_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     // take into account host endianness and pass correct bytes
     uint8_t val_raw[] = {val, val >> 8, val >> 16, val >> 24, val >> 32, val >> 48, val >> 56};
 
-    warppipe_write(TAILQ_FIRST(&warp->pcied_server.clients)->client, 0, addr, &val, size);
+    warppipe_write(TAILQ_FIRST(&warp->pcied_server.clients)->client, 0, addr, val_raw, size);
 }
 
 static const MemoryRegionOps warp_mmio_ops = {
@@ -210,14 +235,14 @@ static const MemoryRegionOps warp_mmio_ops = {
 
 };
 
-static void *warp_fact_thread(void *opaque)
+static void *warp_thread(void *opaque)
 {
     WarpPipeState *warp = opaque;
-
 
     if (warp->pcied_server.listen) {
         int counter = 0;
         while (1) {
+            qemu_cond_timedwait(&warp->thr_loop, &warp->thr_mutex_loop, 50);
             qemu_mutex_lock_iothread();
             warppipe_server_loop(&warp->pcied_server);
             qemu_mutex_unlock_iothread();
@@ -230,13 +255,25 @@ static void *warp_fact_thread(void *opaque)
                     warppipe_write(i->client, 1, 0x0, &msg.data, sizeof(msg.data));
                 counter = 0;
             }
+            if (warp->pcied_server.quit)
+                break;
         }
     } else {
         while (1) {
-            qemu_mutex_lock(&warp->thr_mutex);
-            qemu_cond_timedwait(&warp->thr_cond, &warp->thr_mutex, 1000);
+            qemu_mutex_lock(&warp->thr_mutex_loop);
+            qemu_cond_timedwait(&warp->thr_loop, &warp->thr_mutex_loop, 50);
+            // when we have some data already available,
+            // wait
+            while ((qatomic_read(&warp->status) & WARP_PIPE_STATUS_IDLE) == 0) {
+                // when signaled or every 100ms
+                qemu_cond_timedwait(&warp->thr_loop, &warp->thr_mutex_loop, 100);
+            }
+            qemu_mutex_lock_iothread();
             warppipe_server_loop(&warp->pcied_server);
-            qemu_mutex_unlock(&warp->thr_mutex);
+            qemu_mutex_unlock_iothread();
+            qemu_mutex_unlock(&warp->thr_mutex_loop);
+            if (warp->pcied_server.quit)
+                break;
         }
     }
 
@@ -300,10 +337,15 @@ static void pci_warp_realize(PCIDevice *pdev, Error **errp)
         }
     }
 
-    qemu_mutex_init(&warp->thr_mutex);
-    qemu_cond_init(&warp->thr_cond);
+    qemu_mutex_init(&warp->thr_mutex_loop);
+    qemu_mutex_init(&warp->thr_mutex_cfg);
+    qemu_mutex_init(&warp->thr_mutex_data);
+    qemu_cond_init(&warp->thr_loop);
+    qemu_cond_init(&warp->thr_cfg_rdy);
+    qemu_cond_init(&warp->thr_data_rdy);
+    qatomic_set(&warp->status, WARP_PIPE_STATUS_IDLE);
 
-    qemu_thread_create(&warp->thread, "warp", warp_fact_thread,
+    qemu_thread_create(&warp->thread, "warp", warp_thread,
                        warp, QEMU_THREAD_JOINABLE);
 
     memory_region_init_io(&warp->mmio, OBJECT(warp), &warp_mmio_ops, warp,
@@ -323,10 +365,15 @@ static void pci_warp_uninit(PCIDevice *pdev)
 {
     WarpPipeState *warp = WARP_PIPE(pdev);
 
+    warp->pcied_server.quit = true;
     qemu_thread_join(&warp->thread);
 
-    qemu_cond_destroy(&warp->thr_cond);
-    qemu_mutex_destroy(&warp->thr_mutex);
+    qemu_cond_destroy(&warp->thr_loop);
+    qemu_cond_destroy(&warp->thr_cfg_rdy);
+    qemu_cond_destroy(&warp->thr_data_rdy);
+    qemu_mutex_destroy(&warp->thr_mutex_loop);
+    qemu_mutex_destroy(&warp->thr_mutex_cfg);
+    qemu_mutex_destroy(&warp->thr_mutex_data);
 
     msix_uninit_exclusive_bar(pdev);
 }
