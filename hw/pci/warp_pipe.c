@@ -55,6 +55,7 @@ struct WarpPipeState {
     PCIDevice pdev;
     MemoryRegion mmio;
     struct warppipe_server_t pcied_server;
+    bool pcied_server_configured;
     QemuThread thread;
     QemuMutex thr_mutex_loop;
     QemuMutex thr_mutex_cfg;
@@ -378,19 +379,6 @@ static void pci_warp_uninit(PCIDevice *pdev)
     msix_uninit_exclusive_bar(pdev);
 }
 
-static void warp_listen(Object *obj, const bool listen, Error **errp)
-{
-    WarpPipeState *warp = WARP_PIPE(obj);
-    warp->pcied_server.listen = listen;
-}
-
-static void warp_port(Object *obj, const char *port, Error **errp)
-{
-    WarpPipeState *warp = WARP_PIPE(obj);
-    warp->pcied_server.port = malloc(strlen(port) * sizeof(char));
-    strcpy((char *)warp->pcied_server.port, port);
-}
-
 static void warp_server_accept_cb(struct warppipe_client_t *client, void *opaque)
 {
     WarpPipeState *pipe = opaque;
@@ -402,13 +390,19 @@ static void warp_server_accept_cb(struct warppipe_client_t *client, void *opaque
     warppipe_register_config0_write_cb(client, pcied_write_config0_handler);
 }
 
-static void warp_connect(Object *obj, const char *addr, Error **errp)
+static void warp_create_server(WarpPipeState *warp, bool listen, const char *addr, Error **errp)
 {
-    WarpPipeState *warp = WARP_PIPE(obj);
+    InetSocketAddress *inet_addr = g_new(InetSocketAddress, 1);
+    if (inet_parse(inet_addr, addr, errp)) {
+        return;
+    }
 
-    warp->pcied_server.host = malloc(strlen(addr) * sizeof(char));
-    strcpy((char *)warp->pcied_server.host, addr);
+    warp->pcied_server.host = malloc(strlen(inet_addr->host) * sizeof(char));
+    warp->pcied_server.port = malloc(strlen(inet_addr->port) * sizeof(char));
+    strcpy((char *)warp->pcied_server.host, inet_addr->host);
+    strcpy((char *)warp->pcied_server.port, inet_addr->port);
     warp->pcied_server.addr_family = AF_INET;
+    warp->pcied_server.listen = listen;
     warp->pcied_server.quit = false;
     if (warp->pcied_server.listen)
         warp->pcied_server.host = NULL;
@@ -422,11 +416,30 @@ static void warp_connect(Object *obj, const char *addr, Error **errp)
     }
 }
 
+static void warp_listen(Object *obj, const char *addr, Error **errp)
+{
+    if (WARP_PIPE(obj)->pcied_server_configured) {
+        printf("warp-pipe object already initialized, please use only single \"connect\" or \"listen\" property");
+        return;
+    }
+    WARP_PIPE(obj)->pcied_server_configured = true;
+    warp_create_server(WARP_PIPE(obj), true, addr, errp);
+}
+
+static void warp_connect(Object *obj, const char *addr, Error **errp)
+{
+    if (WARP_PIPE(obj)->pcied_server_configured) {
+        printf("warp-pipe object already initialized, please use only single \"connect\" or \"listen\" property");
+        return;
+    }
+    WARP_PIPE(obj)->pcied_server_configured = true;
+    warp_create_server(WARP_PIPE(obj), false, addr, errp);
+}
+
 static void warp_instance_init(Object *obj)
 {
+    object_property_add_str(obj, "listen", NULL, warp_listen);
     object_property_add_str(obj, "connect", NULL, warp_connect);
-    object_property_add_str(obj, "port", NULL, warp_port);
-    object_property_add_bool(obj, "listen", NULL, warp_listen);
 }
 
 static void warp_class_init(ObjectClass *class, void *data)
