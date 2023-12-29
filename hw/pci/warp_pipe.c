@@ -76,49 +76,49 @@ struct WarpPipeState {
     MSIVector *msi_vectors;
 };
 
-static int pcied_read_handler(uint64_t addr, void *data, int length, void *opaque)
+static int pcied_read_handler(uint64_t addr, void *data, int length, void *private_data)
 {
-    WarpPipeState *warp = opaque;
+    WarpPipeState *warp = private_data;
 
     memcpy(data, warp->dma_buf + addr, length);
 
     return 0;
 }
 
-static void pcied_write_handler(uint64_t addr, const void *data, int length, void *opaque)
+static void pcied_write_handler(uint64_t addr, const void *data, int length, void *private_data)
 {
-    WarpPipeState *warp = opaque;
+    WarpPipeState *warp = private_data;
 
     memcpy(warp->dma_buf + addr, data, length);
 }
 
-static int pcied_read_config0_handler(uint64_t addr, void *data, int length, void *opaque)
+static int pcied_read_config0_handler(uint64_t addr, void *data, int length, void *private_data)
 {
-    WarpPipeState *pipe = opaque;
+    WarpPipeState *pipe = private_data;
 
     memcpy(data, pipe->pdev.config + addr, length);
 
     return 0;
 }
 
-static void pcied_write_config0_handler(uint64_t addr, const void *data, int length, void *opaque)
+static void pcied_write_config0_handler(uint64_t addr, const void *data, int length, void *private_data)
 {
-    WarpPipeState *pipe = opaque;
+    WarpPipeState *pipe = private_data;
     uint32_t val = *(uint32_t *)data;
     pci_default_write_config(&pipe->pdev, addr, val, length);
 }
 
-static void pcied_msix_write_handler(uint64_t addr, const void *data, int length, void *opaque)
+static void pcied_msix_write_handler(uint64_t addr, const void *data, int length, void *private_data)
 {
-    WarpPipeState *pipe = opaque;
+    WarpPipeState *pipe = private_data;
     msix_notify(&pipe->pdev, 0);
 }
 
 
 static void pcied_completion_handler(const struct warppipe_completion_status_t completion_status,
-                const void *data, int length, void *opaque)
+                const void *data, int length, void *private_data)
 {
-    WarpPipeState *warp = opaque;
+    WarpPipeState *warp = private_data;
 
     memcpy(warp->completion_data, data, length);
     qatomic_set(&warp->status, WARP_PIPE_STATUS_DATA_CPL);
@@ -127,9 +127,9 @@ static void pcied_completion_handler(const struct warppipe_completion_status_t c
     qemu_mutex_unlock(&warp->thr_mutex_data);
 }
 
-static void pcied_config0_read_completion_handler(const struct warppipe_completion_status_t completion_status, const void *data, int length, void *opaque)
+static void pcied_config0_read_completion_handler(const struct warppipe_completion_status_t completion_status, const void *data, int length, void *private_data)
 {
-    WarpPipeState *warp = opaque;
+    WarpPipeState *warp = private_data;
 
     memcpy(warp->completion_cfg_data, data, length);
     qatomic_set(&warp->status, WARP_PIPE_STATUS_CFG_CPL);
@@ -332,7 +332,7 @@ static void pci_warp_realize(PCIDevice *pdev, Error **errp)
         return;
     }
     if(TAILQ_FIRST(&warp->pcied_server.clients)) {
-        if (TAILQ_FIRST(&warp->pcied_server.clients)->client->opaque == NULL) {
+        if (TAILQ_FIRST(&warp->pcied_server.clients)->client->private_data == NULL) {
             error_setg(errp, "No transport specified.");
             return;
         }
@@ -379,10 +379,10 @@ static void pci_warp_uninit(PCIDevice *pdev)
     msix_uninit_exclusive_bar(pdev);
 }
 
-static void warp_server_accept_cb(struct warppipe_client_t *client, void *opaque)
+static void warp_server_accept_cb(struct warppipe_client_t *client, void *private_data)
 {
-    WarpPipeState *pipe = opaque;
-    client->opaque = pipe;
+    WarpPipeState *pipe = private_data;
+    client->private_data = pipe;
 
     warppipe_register_bar(client, 0x10000000, 1 * MiB, 0, pcied_read_handler, pcied_write_handler);
     warppipe_register_bar(client, 0x20000000, 1 * MiB, 1, NULL, pcied_msix_write_handler);
@@ -407,7 +407,7 @@ static void warp_create_server(WarpPipeState *warp, bool listen, const char *add
     if (warp->pcied_server.listen)
         warp->pcied_server.host = NULL;
 
-    warp->pcied_server.opaque = warp;
+    warp->pcied_server.private_data = warp;
     warppipe_server_register_accept_cb(&warp->pcied_server, warp_server_accept_cb);
 
     if (warppipe_server_create(&warp->pcied_server) == -1) {
