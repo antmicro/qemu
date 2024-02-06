@@ -54,7 +54,7 @@ typedef struct MSIVector {
 struct WarpPipeState {
     PCIDevice pdev;
     MemoryRegion mmio;
-    struct warppipe_server_t pcied_server;
+    struct warppipe_server pcied_server;
     bool pcied_server_configured;
     QemuThread thread;
     QemuMutex thr_mutex_loop;
@@ -115,7 +115,7 @@ static void pcied_msix_write_handler(uint64_t addr, const void *data, int length
 }
 
 
-static void pcied_completion_handler(const struct warppipe_completion_status_t completion_status,
+static void pcied_completion_handler(const struct warppipe_completion_status completion_status,
                 const void *data, int length, void *private_data)
 {
     WarpPipeState *warp = private_data;
@@ -127,7 +127,7 @@ static void pcied_completion_handler(const struct warppipe_completion_status_t c
     qemu_mutex_unlock(&warp->thr_mutex_data);
 }
 
-static void pcied_config0_read_completion_handler(const struct warppipe_completion_status_t completion_status, const void *data, int length, void *private_data)
+static void pcied_config0_read_completion_handler(const struct warppipe_completion_status completion_status, const void *data, int length, void *private_data)
 {
     WarpPipeState *warp = private_data;
 
@@ -251,7 +251,7 @@ static void *warp_thread(void *opaque)
             if (counter == 60) { // every 60 messages or 60s
                 // Send notification for test purposes
                 MSIMessage msg = msix_get_message((PCIDevice *)warp, 0);
-                struct warppipe_client_node_t *i;
+                struct warppipe_client_node *i;
                 TAILQ_FOREACH(i, &warp->pcied_server.clients, next)
                     warppipe_write(i->client, 1, 0x0, &msg.data, sizeof(msg.data));
                 counter = 0;
@@ -379,7 +379,7 @@ static void pci_warp_uninit(PCIDevice *pdev)
     msix_uninit_exclusive_bar(pdev);
 }
 
-static void warp_server_accept_cb(struct warppipe_client_t *client, void *private_data)
+static void warp_server_accept_cb(struct warppipe_client *client, void *private_data)
 {
     WarpPipeState *pipe = private_data;
     client->private_data = pipe;
